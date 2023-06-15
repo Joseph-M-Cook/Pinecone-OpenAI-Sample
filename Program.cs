@@ -174,7 +174,7 @@ class Program
                         {
                             Method = HttpMethod.Post,
                             RequestUri = new Uri("https://api.openai.com/v1/embeddings"),
-                            Headers = { { "Authorization", $"Bearer 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" },{ "accept", "application/json" }},
+                            Headers = { { "Authorization", $"Bearer {OPENAI_API_KEY}" },{ "accept", "application/json" }},
                             Content = new StringContent(JsonSerializer.Serialize(new { input = batch, model = "text-embedding-ada-002" }), Encoding.UTF8, "application/json") // Fix
                         };
 
