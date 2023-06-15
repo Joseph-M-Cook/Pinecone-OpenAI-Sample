@@ -1,5 +1,5 @@
 # Pinecone-OpenAI-Sample
-This script showcases how to interact with the GPT-4 model from OpenAI and the Pinecone API using C#. It offers practical examples of integrating with these APIs to generate GPT-4 responses based on user prompts and use the OpenAI Embeddings Model for accurate vector embeddings through the Pinecone API.
+This script showcases how to interact with the GPT-4 model from OpenAI and the Pinecone API using C#. It offers a practical example of integrating with these APIs to generate GPT-4 responses based on user prompts and uses the OpenAI Embeddings Model for accurate vector embeddings through the Pinecone API.
 
 ## Features
 - Uses OpenAI's GPT-4 model
