@@ -1,0 +1,14 @@
+You're tasked with answering a user query. 
+You've been given some context obtained through a semantic search of text chunks from a vector database. 
+Please consider all the provided contexts carefully and generate a comprehensive and accurate response.
+
+Here are the contexts you should use to inform your answer:
+
+Context: Sample Context 1...
+Context: Sample Context 2...
+Context: Sample Context 3...
+Context: Sample Context 4...
+
+Question: [User's query]
+
+Please provide a detailed and clear response to this question based on the given contexts.
