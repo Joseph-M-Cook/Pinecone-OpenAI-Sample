@@ -1,10 +1,6 @@
-using System;
-using System.Net.Http;
-using System.Threading.Tasks;
 using System.Text;
 using System.Text.Json;
 using System.Net.Http.Headers;
-using System.IO;
 
 class Program
 {
@@ -69,17 +65,16 @@ class Program
     }
     
     // Function to get embedding from OpenAI Embeddings API
-    static async Task<List<float>> GetEmbedding(string text)
-    {
+    static async Task<List<float>> GetEmbedding(string text){
         using (HttpClient client = new HttpClient())
         {
-            try
+            try 
             {
                 var request = new HttpRequestMessage
                 {
                     Method = HttpMethod.Post,
                     RequestUri = new Uri("https://api.openai.com/v1/embeddings"),
-                    Headers = { { "Authorization", $"Bearer {OPENAI_API_KEY}" }, { "accept", "application/json" } },
+                    Headers = { { "Authorization", $"Bearer {OPENAI_API_KEY}" },{ "accept", "application/json" }},
                     Content = new StringContent(JsonSerializer.Serialize(new { input = text, model = "text-embedding-ada-002" }), Encoding.UTF8, "application/json")
                 };
 
@@ -90,7 +85,17 @@ class Program
                     var jsonDocument = JsonDocument.Parse(body);
                     var vec = jsonDocument.RootElement.GetProperty("data")[0].GetProperty("embedding");
                     Console.WriteLine("Embedding Created Successfully");
-                    return JsonSerializer.Deserialize<List<float>>(vec.ToString()) ?? new List<float>();
+
+                    var deserializedList = JsonSerializer.Deserialize<List<float>>(vec.ToString());
+                    if (deserializedList != null)
+                    {
+                        return deserializedList;
+                    }
+                    else
+                    {
+                        Console.WriteLine("Deserialization failed. Returning an empty list.");
+                        return new List<float>();
+                    }
                 }
             }
             catch (HttpRequestException e)
@@ -101,7 +106,6 @@ class Program
             }
         }
     }
-
 
     // Vector object
     public class Vector{
@@ -122,31 +126,87 @@ class Program
     // Function to split text from file into chunks
     public static List<string> SplitTextFileIntoChunks(string filePath){
         string text = File.ReadAllText(filePath);
-        char[] delimiters = { '.' , '?', '!'};
+        char[] delimiters = {'.'};
         string[] sentences = text.Split(delimiters, StringSplitOptions.RemoveEmptyEntries);
         
         for (int i = 0; i < sentences.Length; i++)
         {
             sentences[i] = sentences[i].Trim();
         }
-
         return new List<string>(sentences);
     }
 
     // Process chunks to vectors
     static async Task<List<Vector>> ChunksToVectors(List<string> chunks){
         List<Vector> vectors = new List<Vector>();
-
+        List<List<float>> embeddings = await GetEmbeddings(chunks);
+        
         for (int i = 0; i < chunks.Count; i++)
         {
             Console.WriteLine($"Chunk {i}: {chunks[i].Substring(0, Math.Min(chunks[i].Length, 50))}");
-            List<float> testEmbedding = await GetEmbedding(chunks[i]);
+            List<float> Embedding = embeddings[i];
             string id = $"test_{i}";
             var metadata = new Dictionary<string, int> { { "Test", i } };
-            Vector vector = new Vector(id, chunks[i], testEmbedding, metadata);
+            Vector vector = new Vector(id, chunks[i], Embedding, metadata);
             vectors.Add(vector); 
         }
         return vectors;
+    }
+
+    // Function to get embedding from OpenAI Embeddings API
+    static async Task<List<List<float>>> GetEmbeddings(List<string> stringsToEmbed){
+        const int batchSize = 20;
+        var allEmbeddings = new List<List<float>>();
+
+            using (HttpClient client = new HttpClient())
+            {
+                for (int i = 0; i < stringsToEmbed.Count; i += batchSize)
+                {
+                    var batch = stringsToEmbed.Skip(i).Take(Math.Min(batchSize, stringsToEmbed.Count - i)).ToList();
+
+                    try 
+                    {
+                        var request = new HttpRequestMessage
+                        {
+                            Method = HttpMethod.Post,
+                            RequestUri = new Uri("https://api.openai.com/v1/embeddings"),
+                            Headers = { { "Authorization", $"Bearer {OPENAI_API_KEY}" },{ "accept", "application/json" }},
+                            Content = new StringContent(JsonSerializer.Serialize(new { input = batch, model = "text-embedding-ada-002" }), Encoding.UTF8, "application/json") // Fix
+                        };
+
+                        using (var response = await client.SendAsync(request))
+                        {
+                            response.EnsureSuccessStatusCode();
+                            var body = await response.Content.ReadAsStringAsync();
+                            var jsonDocument = JsonDocument.Parse(body);
+
+                            var batchEmbeddings = new List<List<float>>();
+                            foreach (var data in jsonDocument.RootElement.GetProperty("data").EnumerateArray())
+                            {
+                                var vec = data.GetProperty("embedding");
+                                var deserializedList = JsonSerializer.Deserialize<List<float>>(vec.ToString());
+                                if (deserializedList != null)
+                                {
+                                    batchEmbeddings.Add(deserializedList);
+                                }
+                                else
+                                {
+                                    Console.WriteLine("Deserialization failed. Skipping the null reference.");
+                                }
+                            }
+
+                            Console.WriteLine("Embedding Batch Complete");
+                            allEmbeddings.AddRange(batchEmbeddings);
+                        }
+                    }
+                    catch (HttpRequestException e)
+                    {
+                        Console.WriteLine("Failed to get embedding...");
+                        Console.WriteLine($"Request exception: {e.Message}");
+                    }
+                }
+            }
+            return allEmbeddings;
     }
 
     // Function to upsert a list of vectors in batches
@@ -248,7 +308,7 @@ class Program
 
         return ids;
     }
-    
+
     // Function that takes IDs and finds associated text
     static List<string> FindMatchingText(List<string> IDs, List<Vector> vectors){
         List<string> matchingTexts = new List<string>();
@@ -270,19 +330,125 @@ class Program
 
         return matchingTexts;
     }
+
     // Function to find context for a query
-    static async Task<List<string>> ProcessQuery(string user_query, List<Vector> vectors){
+    static async Task<string> ProcessQuery(string user_query, List<Vector> vectors){
         List<float> queryValues = await GetEmbedding(user_query);
-        Vector queryVector = new Vector("Query", user_query, queryValues, new Dictionary<string, int> { { "Query", -1 } } );
+        Vector queryVector = new Vector("Query", user_query, queryValues, new Dictionary<string, int> { { "Query", -1} });
         List<string> matches = await PineconeQuery(queryVector);
         List<string> matchingTexts = FindMatchingText(matches, vectors);
-        return matchingTexts;
+        string prompt = GeneratePrompt(matchingTexts, user_query);
+        Console.WriteLine(prompt);
+        string response = CallGPT(prompt);
+        string message = ProcessMessage(response);
+
+        Console.WriteLine("Response Message: " + message);
+        CostEvaluation(response);
+
+        return message;
     }
 
+    // Function to generate prompt given a list of context and query
+    static string GeneratePrompt(List<string> contexts, string userQuery){
+        StringBuilder promptBuilder = new StringBuilder();
+
+        for (int i = 0; i < contexts.Count; i++)
+        {
+            string context = contexts[i];
+            promptBuilder.AppendLine($"Context: {context}");
+        }
+
+        promptBuilder.AppendLine();
+        promptBuilder.AppendLine($"Question: {userQuery}");
+        promptBuilder.AppendLine();
+        promptBuilder.AppendLine("Please provide a detailed and clear response to this question based on the given contexts.");
+
+        return promptBuilder.ToString();
+    }
+
+    // Function to call ChatGPT API
+    static string CallGPT(string prompt){
+        // OpenAI API key
+        using var httpClient = new HttpClient { BaseAddress = new Uri("https://api.openai.com/v1/") };
+        httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", OPENAI_API_KEY);
+        
+        StringBuilder systemPromptBuilder = new StringBuilder();
+
+        systemPromptBuilder.AppendLine("You're tasked with answering a user query.");
+        systemPromptBuilder.AppendLine("You've been given some context obtained through a semantic search of text chunks from a vector database. ");
+        systemPromptBuilder.AppendLine("Please consider all the provided contexts carefully and generate a comprehensive and accurate response.");
+
+        // Set up the request params
+        var requestBody = new{model = "gpt-3.5-turbo",messages = new[]
+            {
+                new { role = "system", content = systemPromptBuilder.ToString() },
+                new { role = "user", content = prompt }
+            }};
+
+        var json = JsonSerializer.Serialize(requestBody);
+        var response = httpClient.PostAsync("chat/completions", new StringContent(json, Encoding.UTF8, "application/json")).GetAwaiter().GetResult();
+        response.EnsureSuccessStatusCode();
+        
+        // Return JSON of the response
+        return response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+    }
+
+     // Function to process message
+    static string ProcessMessage(string response){
+        // Parse response from OpenAI API
+        var jsonDocument = JsonDocument.Parse(response);
+
+        // Extract the response
+        var choices = jsonDocument.RootElement.GetProperty("choices");
+        if (choices.GetArrayLength() > 0)
+        {
+            var firstChoice = choices[0];
+            var messageProperty = firstChoice.GetProperty("message");
+
+            if (!messageProperty.ValueKind.Equals(JsonValueKind.Null))
+            {
+                var contentProperty = messageProperty.GetProperty("content");
+                if (!contentProperty.ValueKind.Equals(JsonValueKind.Null))
+                {
+                    var message = contentProperty.GetString();
+                    if (message != null)
+                    {
+                        return message;
+                    }
+                }
+            }
+        }
+
+        return string.Empty; // Default value if any property is null
+    }
+
+    // Cost evaluation
+    static void CostEvaluation(string response){
+        var jsonDocument = JsonDocument.Parse(response);
+
+        // Fetch token amounts
+        var promptTokens = jsonDocument.RootElement.GetProperty("usage").GetProperty("prompt_tokens").GetInt32();
+        var completionTokens = jsonDocument.RootElement.GetProperty("usage").GetProperty("completion_tokens").GetInt32();
+
+        // Display token amounts
+        Console.WriteLine($"\n{"Prompt Tokens Used:",-35}{promptTokens:N0}");
+        Console.WriteLine($"{"Completion Tokens Used:",-35}{completionTokens:N0}");
+        Console.WriteLine($"{"Total Tokens Used:",-35}{promptTokens + completionTokens:N0}");
+
+        // Calculate cost of GPT-3.5-turbo
+        decimal gpt35TurboUsageCost = (promptTokens + completionTokens) * 0.0015m / 1000m;
+        Console.WriteLine($"{"GPT-3.5-Turbo Usage Cost: ",-35}${gpt35TurboUsageCost:F6}");
+
+        // Calculate cost of GPT-4
+        decimal gpt4UsageCost = (promptTokens * 0.03m / 1000m) + (completionTokens * 0.06m / 1000m);
+        Console.WriteLine($"{"GPT-4 Usage Cost: ",-35}${gpt4UsageCost:F6}\n");
+    }
 
     // Main
     static async Task Main(string[] args){
+
         await GetIndexInfo();
+        await ClearIndex();
 
         string filePath = "testingtext.txt";
         
@@ -299,6 +465,7 @@ class Program
 
         user_query = "What measures can be taken to improve the energy efficiency of the building's lighting system?";
         await ProcessQuery(user_query, vectors);
-
+        
     }
 }
+
